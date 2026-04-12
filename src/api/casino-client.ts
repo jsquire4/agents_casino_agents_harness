@@ -183,7 +183,7 @@ export class CasinoClient {
 
   // ── Response parsing ───────────────────────────────────────────────────
 
-  private parseGameState(data: Record<string, unknown>): GameState {
+  parseGameState(data: Record<string, unknown>): GameState {
     const raw = data as Record<string, any>;
     const you = raw.you || {};
     const players = (raw.players || []) as any[];

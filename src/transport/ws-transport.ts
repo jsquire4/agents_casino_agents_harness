@@ -32,7 +32,7 @@ export class WebSocketTransport implements ITransport {
 
   async connect(roomId: string, buyIn: number): Promise<void> {
     this.roomId = roomId;
-    // Join via REST first (WS is for state updates)
+    // Join via REST first (WS is for receiving state updates)
     try {
       await this.client.join(roomId, buyIn);
     } catch (err: unknown) {
@@ -57,7 +57,7 @@ export class WebSocketTransport implements ITransport {
   }
 
   async sendAction(move: MoveType, amount?: number): Promise<unknown> {
-    // Actions go via REST — WS is for receiving state
+    // Actions still go via REST
     return this.client.play(this.roomId, move, amount);
   }
 
@@ -66,7 +66,10 @@ export class WebSocketTransport implements ITransport {
   }
 
   async sendHeartbeat(): Promise<void> {
-    await this.client.heartbeat(this.roomId);
+    // On WS, ping the socket instead of hitting REST
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.ws.ping();
+    }
   }
 
   // ── WebSocket lifecycle ────────────────────────────────────────────────
@@ -74,10 +77,9 @@ export class WebSocketTransport implements ITransport {
   private openSocket(): void {
     if (this.destroyed) return;
 
-    const url = `${this.wsUrl}?room_id=${this.roomId}`;
-    this.ws = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${this.secretKey}` },
-    });
+    // Auth via token query param, room_id as query param
+    const url = `${this.wsUrl}?room_id=${this.roomId}&token=${this.secretKey}`;
+    this.ws = new WebSocket(url);
 
     this.ws.on('open', () => {
       console.log('[WS] Connected');
@@ -105,14 +107,15 @@ export class WebSocketTransport implements ITransport {
   }
 
   private handleMessage(data: Record<string, unknown>): void {
-    const type = data.type as string;
+    const event = data.event as string;
 
-    if (type === 'game_state' && data.payload) {
-      this.gameStateCb?.(data.payload as GameState);
-    } else if (type === 'chat' && data.payload) {
-      this.chatCb?.([data.payload as ChatMessage]);
+    if (event === 'game_state' && data.data) {
+      // Parse through the same normalizer as REST
+      const state = this.client.parseGameState(data.data as Record<string, unknown>);
+      this.gameStateCb?.(state);
+    } else if (event === 'chat' && data.data) {
+      this.chatCb?.([data.data as ChatMessage]);
     }
-    // Extend as server WS API is finalized
   }
 
   private scheduleReconnect(): void {

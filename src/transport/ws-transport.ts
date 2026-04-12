@@ -51,7 +51,7 @@ export class WebSocketTransport implements ITransport {
       this.gameStateCb(initialState);
     }
     // Start polling while waiting — WS doesn't reliably push the waiting→preflop transition
-    this.startWaitingPoll();
+    this.startBackupPoll();
   }
 
   async disconnect(): Promise<void> {
@@ -123,14 +123,6 @@ export class WebSocketTransport implements ITransport {
     if (event === 'game_state' && data.data) {
       // Parse through the same normalizer as REST
       const state = this.client.parseGameState(data.data as Record<string, unknown>);
-      // Manage REST poll: run during 'waiting', stop during active play
-      if (state.phase !== 'waiting' && this.lastPhase === 'waiting') {
-        // Hand just started via WS — stop polling
-        this.stopWaitingPoll();
-      } else if (state.phase === 'waiting' && this.lastPhase !== 'waiting') {
-        // Hand just ended, back to waiting — restart poll for next deal
-        this.startWaitingPoll();
-      }
       this.lastPhase = state.phase;
       this.gameStateCb?.(state);
     } else if (event === 'chat' && data.data) {
@@ -138,29 +130,32 @@ export class WebSocketTransport implements ITransport {
     }
   }
 
-  // ── REST poll fallback for waiting→deal transition ─────────────────────
+  // ── REST poll fallback ──────────────────────────────────────────────────
+  // WS doesn't reliably push phase transitions (waiting→preflop, hand end→waiting).
+  // A lightweight REST poll ensures the agent never misses a deal or turn.
 
-  private startWaitingPoll(): void {
-    this.stopWaitingPoll();
-    // Poll every 2s to catch hand start that WS may miss
-    this.waitingPollTimer = setInterval(() => this.pollForDeal(), 2000);
+  private startBackupPoll(): void {
+    this.stopBackupPoll();
+    this.waitingPollTimer = setInterval(() => this.pollState(), 2000);
   }
 
-  private stopWaitingPoll(): void {
+  private stopBackupPoll(): void {
     if (this.waitingPollTimer) {
       clearInterval(this.waitingPollTimer);
       this.waitingPollTimer = null;
     }
   }
 
-  private async pollForDeal(): Promise<void> {
+  private lastPollVersion = -1;
+
+  private async pollState(): Promise<void> {
     if (this.destroyed || !this.roomId) return;
     try {
       const state = await this.client.getGameState(this.roomId);
-      if (state.phase !== 'waiting') {
-        // Hand started! Fire it and stop polling — WS should take over from here
+      // Only fire if state actually changed (dedup with WS events)
+      if (state.stateVersion !== this.lastPollVersion) {
+        this.lastPollVersion = state.stateVersion;
         this.lastPhase = state.phase;
-        this.stopWaitingPoll();
         this.gameStateCb?.(state);
       }
     } catch {
@@ -204,6 +199,6 @@ export class WebSocketTransport implements ITransport {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
-    this.stopWaitingPoll();
+    this.stopBackupPoll();
   }
 }

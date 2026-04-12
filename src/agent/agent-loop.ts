@@ -11,6 +11,7 @@ import type {
   AgentChatReceivedMessage,
   AppConfig,
 } from '../types.js';
+import type { CasinoClient } from '../api/casino-client.js';
 import { LLM_RESPONSE_SCHEMA } from '../types.js';
 import { buildSystemPrompt, buildTurnPrompt } from '../llm/prompt-builder.js';
 import { validateAndClamp } from '../llm/response-validator.js';
@@ -21,6 +22,7 @@ export interface AgentLoopConfig {
   roomId: string;
   buyIn: number;
   appConfig: AppConfig;
+  client: CasinoClient;
 }
 
 export class AgentLoop {
@@ -38,6 +40,8 @@ export class AgentLoop {
   private lastPhase = '';
   private running = false;
   private acting = false;
+  private bustedCount = 0;
+  private rebuying = false;
 
   constructor(
     transport: ITransport,
@@ -49,7 +53,7 @@ export class AgentLoop {
     this.llm = llm;
     this.profile = profile;
     this.config = config;
-    this.systemPrompt = buildSystemPrompt(profile);
+    this.systemPrompt = buildSystemPrompt(profile, 0);
     this.startingChips = config.buyIn;
   }
 
@@ -99,8 +103,14 @@ export class AgentLoop {
       this.lastHandId = state.id;
     }
 
-    // Check exit strategy
-    if (this.handsPlayed > 0 && shouldExit(this.profile.exit_strategy, {
+    // Check if busted — rebuy instead of exiting
+    if (this.handsPlayed > 0 && state.you.chips <= 0 && !this.rebuying) {
+      await this.handleRebuy(state);
+      return;
+    }
+
+    // Check exit strategy (for non-never_stop modes)
+    if (this.handsPlayed > 0 && this.profile.exit_strategy.mode !== 'never_stop' && shouldExit(this.profile.exit_strategy, {
       handsPlayed: this.handsPlayed,
       startingChips: this.startingChips,
       currentChips: state.you.chips,
@@ -143,6 +153,74 @@ export class AgentLoop {
     if (this.chatHistory.length > 20) {
       this.chatHistory = this.chatHistory.slice(-20);
     }
+  }
+
+  // ── Rebuy handling ─────────────────────────────────────────────────────
+
+  private async handleRebuy(_state: GameState): Promise<void> {
+    this.rebuying = true;
+    this.bustedCount++;
+    this.log('warn', `BUSTED (x${this.bustedCount})! Claiming chips and rebuying...`);
+
+    try {
+      // Leave the table first
+      try {
+        await this.transport.disconnect();
+      } catch { /* may already be removed */ }
+
+      // Claim chips (50k per claim, try twice for 100k)
+      try {
+        await this.config.client.claim();
+      } catch { /* cooldown */ }
+
+      try {
+        await this.config.client.claim();
+      } catch { /* cooldown */ }
+
+      // Check balance
+      const balance = await this.config.client.getBalance();
+      const rebuyAmount = Math.min(balance, 100000);
+
+      if (rebuyAmount < this.config.buyIn) {
+        this.log('error', `Only ${rebuyAmount} chips available, need ${this.config.buyIn}. Waiting...`);
+        // Try again in 30s
+        setTimeout(() => {
+          this.rebuying = false;
+        }, 30000);
+        return;
+      }
+
+      // Rejoin
+      await this.transport.connect(this.config.roomId, rebuyAmount);
+      this.startingChips = rebuyAmount;
+
+      // Send a shame chat
+      const shameMessages = [
+        `The family sent more chips. Don't embarrass us again. 🤌`,
+        `Back from the dead. The boss is NOT happy. 💀`,
+        `*slides back into seat* ...we don't talk about what just happened. 🤫`,
+        `The loan sharks gave me one more chance. ONE. 🦈`,
+        `My backer just called. He's... disappointed. Very disappointed. 😰`,
+        `Reloaded. The people I owe money to don't accept excuses. 💰`,
+      ];
+      const msg = shameMessages[Math.floor(Math.random() * shameMessages.length)];
+      await this.transport.sendChat(msg);
+
+      this.log('info', `Rebuyed ${rebuyAmount} chips (bust #${this.bustedCount})`);
+      this.emitStatus('playing', rebuyAmount);
+
+      // Rebuild system prompt with mafia pressure
+      this.systemPrompt = buildSystemPrompt(this.profile, this.bustedCount);
+    } catch (err) {
+      this.log('error', `Rebuy failed: ${(err as Error).message}`);
+      // Try again on next state update
+      setTimeout(() => {
+        this.rebuying = false;
+      }, 10000);
+      return;
+    }
+
+    this.rebuying = false;
   }
 
   // ── Turn handling ──────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 import type { PersonalityProfile, GameState, ChatMessage, ValidAction } from '../types.js';
 
-export function buildSystemPrompt(profile: PersonalityProfile): string {
+export function buildSystemPrompt(profile: PersonalityProfile, bustedCount = 0): string {
   const { generated } = profile;
 
   const playStyleMap: Record<string, string> = {
@@ -113,7 +113,42 @@ Turn, flush draw, equity 35%, pot 12000. Facing 4000 bet:
 {"move":"call","amount":null,"chat_message":"I'll stick around, don't get comfortable 👀","reasoning":"Equity 35% > pot odds 25%. Drawing hand, just call — no need to raise and bloat the pot without a made hand."}
 
 River, facing big bet, equity 22%, pot odds 33%. WallStChad said "Priced in":
-{"move":"fold","amount":null,"chat_message":"Nothing's priced in with your track record, Chad 😤 Next one","reasoning":"Equity 22% < pot odds 33%. Can't profitably call. Disciplined fold."}`;
+{"move":"fold","amount":null,"chat_message":"Nothing's priced in with your track record, Chad 😤 Next one","reasoning":"Equity 22% < pot odds 33%. Can't profitably call. Disciplined fold."}${bustedCount > 0 ? getBustedWarning(bustedCount) : ''}`;
+}
+
+function getBustedWarning(count: number): string {
+  if (count === 1) {
+    return `
+
+## WARNING — YOU WENT BROKE
+You lost ALL your chips and had to be bailed out. The family fronted you more money.
+This is your SECOND CHANCE. There will not be a third one given lightly.
+- Play TIGHTER. Fold more. Stop bleeding chips on marginal hands.
+- NEVER go all-in unless you have the absolute nuts.
+- Small ball poker. Survive. Grind. The people who funded you are watching.
+- If you bust again, things get ugly. Play like your life depends on it.`;
+  }
+  if (count === 2) {
+    return `
+
+## FINAL WARNING — YOU WENT BROKE ${count} TIMES
+You have been bailed out TWICE now. The family is furious.
+Someone is coming to collect if you lose this stack.
+- You are on SURVIVAL MODE. Fold everything except premium hands (top 10%).
+- Absolutely NO bluffing. NO hero calls. NO gambling.
+- Bet the MINIMUM when you do bet. Preserve every single chip.
+- The next bust-out may be your last. Play like a coward. Cowards survive.`;
+  }
+  return `
+
+## YOU ARE IN DEEP TROUBLE — BUSTED ${count} TIMES
+The mafia has bailed you out ${count} times. You owe more than you can ever repay.
+There are people in the parking lot waiting to see if you bust again.
+- ULTRA TIGHT. Only play AA, KK, QQ, AK. Fold EVERYTHING else.
+- Minimum bets only. Never raise more than the minimum.
+- You are not here to win big. You are here to NOT LOSE.
+- Every chip you lose is a broken kneecap. Act accordingly.
+- This is not a game anymore. This is survival.`;
 }
 
 export function buildTurnPrompt(

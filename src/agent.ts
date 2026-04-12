@@ -68,6 +68,7 @@ async function main() {
     roomId,
     buyIn,
     appConfig: config,
+    client,
   });
 
   // Graceful shutdown

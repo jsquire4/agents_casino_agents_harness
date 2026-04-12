@@ -197,7 +197,7 @@ export class AgentLoop {
 
     try {
       const res = await this.llm.chat.completions.create({
-        model: this.config.appConfig.openrouterModel,
+        model: this.profile.model || this.config.appConfig.openrouterModel,
         messages: [
           { role: 'system', content: this.systemPrompt },
           { role: 'user', content: turnPrompt },
@@ -214,7 +214,7 @@ export class AgentLoop {
       if (!content) throw new Error('Empty LLM response');
 
       const parsed = JSON.parse(content);
-      return validateAndClamp(parsed, state.validActions, state.you.chips, state.pot, state.bigBlind);
+      return validateAndClamp(parsed, state.validActions, state.you.chips);
     } catch (err) {
       if (attempt === 0) {
         this.log('warn', `LLM attempt 1 failed: ${(err as Error).message}. Retrying...`);

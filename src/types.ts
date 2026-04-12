@@ -136,6 +136,7 @@ export interface PersonalityProfile {
   risk: RiskTolerance;
   chat_voice: ChatVoice;
   exit_strategy: ExitStrategy;
+  model?: string;
   generated: GeneratedPersonality;
 }
 

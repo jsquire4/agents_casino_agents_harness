@@ -6,6 +6,7 @@
   "risk": "conservative | balanced | aggressive",
   "chat_voice": "auto | intimidating | friendly | chaotic",
   "exit_strategy": { "mode": "never_stop" },
+  "model": "qwen/qwen-2.5-32b-instruct",
   "generated": {
     "one_liner": "A short description of your agent's vibe (max 100 chars)",
     "preflop_range": "Describe which hands they play preflop",

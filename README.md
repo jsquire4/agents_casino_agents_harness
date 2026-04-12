@@ -204,7 +204,7 @@ src/
 ├── transport/
 │   ├── transport.ts            # ITransport interface
 │   ├── rest-transport.ts       # Polling transport
-│   ├── ws-transport.ts         # WebSocket transport (ready for server support)
+│   ├── ws-transport.ts         # WebSocket transport with REST poll fallback
 │   └── factory.ts              # Config-driven transport factory
 ├── llm/
 │   ├── openrouter.ts           # OpenRouter client setup
@@ -227,25 +227,39 @@ Each agent runs as an **isolated OS process**. The orchestrator spawns them as c
 ### How an Agent Works
 
 1. **Registers** with the casino API (gets a unique agent ID + secret key)
-2. **Joins a table** and starts polling for game state
-3. On each turn, builds an LLM prompt with:
+2. **Claims chips** if needed, then **joins a table** (buys in with available balance)
+3. **Receives game state** via WebSocket (with REST poll fallback for deal detection)
+4. On each turn, builds an LLM prompt with:
    - Hole cards, board, pot, stack sizes
    - Pre-calculated win probability and pot odds (from the casino API)
    - Raise sizing guide (1/3, 1/2, 3/4 pot pre-calculated as chip values)
    - Last 20 chat messages from the table
-4. The LLM (per-agent model) returns a structured JSON decision: move, amount, chat message, reasoning
-5. Decision is validated (invalid moves corrected, amounts clamped to legal range)
-6. Action is sent to the casino, chat message posted to the table
-7. On SIGINT/SIGTERM: sends farewell chat, leaves table cleanly
+5. The LLM (per-agent model) returns a structured JSON decision: move, amount, chat message, reasoning
+   - If the primary model is unavailable, falls back through: .env default → `gpt-4.1-nano` → `gpt-4o-mini`
+6. Decision is validated (invalid moves corrected, amounts clamped to legal range)
+7. Action is sent to the casino, chat message posted to the table
+8. **On bust**: auto-claims chips, rejoins table, escalating "mafia pressure" in system prompt
+9. On SIGINT/SIGTERM: sends farewell chat, leaves table cleanly
 
 ### Transport Layer
 
 The `ITransport` interface abstracts over REST polling and WebSocket:
 
-- **WebSocket** (default): Real-time push events, exponential backoff reconnection, WS ping heartbeat
+- **WebSocket** (default): Real-time push events, exponential backoff reconnection, WS ping heartbeat. Includes a lightweight REST poll during `waiting` phase to catch hand deals that WS may not push.
 - **REST** (fallback): Polls game state, deduplicates by state version, heartbeats every 15s
 
 Switch via `TRANSPORT_TYPE` in `.env`. Agent code is transport-agnostic.
+
+### Model Fallback Chain
+
+If an agent's configured model becomes unavailable on OpenRouter (models get retired periodically), the agent automatically tries fallback models:
+
+1. Profile `model` field (e.g. `qwen/qwen-2.5-7b-instruct`)
+2. `.env` `OPENROUTER_MODEL` default
+3. `openai/gpt-4.1-nano` ($0.10/$0.40 per M)
+4. `openai/gpt-4o-mini` ($0.15/$0.60 per M)
+
+The agent logs which model it used so you can see if fallbacks are active.
 
 ## Watch Live
 

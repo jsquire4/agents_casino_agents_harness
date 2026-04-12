@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment (contains API keys)
+.env
+
+# Agent credentials (contain secret keys)
+profiles/*.creds.json
+
+# Agent personality profiles (user-generated, not tracked)
+profiles/*.json
+# Keep the template and directory
+!profiles/example.json.template
+!profiles/.gitkeep
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Claude Code
+.claude/

@@ -1,0 +1,28 @@
+{
+  "name": "my-casino",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "agent": "tsx src/agent.ts",
+    "orch": "tsx src/orchestrator/index.ts",
+    "create-profile": "tsx src/personality/creator.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.0.0",
+    "blessed": "^0.1.81",
+    "dotenv": "^16.4.0",
+    "openai": "^4.73.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/blessed": "^0.1.27",
+    "@types/node": "^22.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}

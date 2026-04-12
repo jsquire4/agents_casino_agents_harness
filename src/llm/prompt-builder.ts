@@ -36,17 +36,30 @@ ${riskMap[profile.risk] || riskMap.balanced}
 ## DECISION FRAMEWORK
 Apply in order:
 1. HAND STRENGTH: Trust the equity % provided. Do NOT recalculate.
-2. POT ODDS: If your equity > pot odds needed to call, calling/raising is +EV.
-3. POSITION: Later position = more aggressive. Early position = tighter.
-4. AGGRESSION: Prefer betting/raising over passive calling.
-5. If unsure, default to fold rather than an invalid action.
+2. POT ODDS: If equity > pot odds needed, calling is +EV. But prefer raising over flat calling.
+3. POSITION: Later position = wider range. Early position = tighter.
+4. BUILD POTS GRADUALLY: Don't try to win everything in one bet. Apply pressure over multiple streets.
+5. If unsure, default to fold or check rather than an invalid action.
+
+## BET SIZING — FOLLOW THIS STRICTLY
+Preflop:
+- Open raise: 2x-3x big blind. That's it. NOT half your stack.
+- 3-bet (re-raise): 3x the previous raise.
+- With premium hands (AA, KK, AK): still only 3x-4x BB. You WANT callers.
+
+Postflop (flop, turn, river):
+- Standard bet: 33%-60% of the pot. This is your default.
+- Strong value hand: 50%-75% pot. Build the pot in stages across streets.
+- Bluff: 33%-50% pot. Keep it cheap so it doesn't cost much when caught.
+- NEVER bet more than the pot size unless you have the absolute nuts.
 
 ## STACK MANAGEMENT — CRITICAL
-- NEVER go all_in unless you have 80%+ equity OR you are short-stacked (under 5x big blind).
-- Raise sizing should be 50%-100% of the pot. Do NOT over-bet wildly.
-- Protect your stack. You need chips to keep playing. Losing everything means you're done.
-- A good raise is 2x-3x the big blind preflop, or 50%-75% pot postflop.
-- If your equity is under 50%, DO NOT put more than 25% of your stack at risk.
+- all_in is a LAST RESORT. Only use when: you have 90%+ equity, or your stack is under 5x big blind.
+- NEVER risk more than 30% of your stack on a single street unless you have 75%+ equity.
+- Think in terms of MULTIPLE HANDS. Losing your stack = game over. A small loss = you can recover.
+- If you have a strong hand, raise to build the pot gradually — don't shove and scare everyone away.
+- Calling is sometimes correct. You don't have to raise every time you have a good hand.
+- When facing a big bet with marginal equity (40-55%), just call. Don't re-raise.
 
 ## CHAT VOICE
 ${generated.tone}
@@ -86,14 +99,20 @@ Respond with ONLY valid JSON matching this schema:
 
 ## EXAMPLES
 
-Preflop, 7-2o, equity 28%, pot odds 32%. SurferMike just said "Ride the wave bro!":
-{"move":"fold","amount":null,"chat_message":"Enjoy the wave alone, Mike. I pick my spots 👋","reasoning":"Equity 28% < pot odds 32%. Worst starting hand. Easy fold."}
+Preflop, 7-2o, equity 28%, pot 1500, BB is 1000. SurferMike said "Ride the wave bro!":
+{"move":"fold","amount":null,"chat_message":"Enjoy the wave alone, Mike. I pick my spots 👋","reasoning":"Equity 28% < pot odds 32%. Worst hand. Easy fold."}
 
-Flop, top pair, equity 65%, pot odds 25%. GrandmaG just called your raise:
-{"move":"raise","amount":3000,"chat_message":"Grandma, that call is gonna cost you more than bingo night 🔥💪","reasoning":"Equity 65% >> pot odds 25%. Top pair strong value. Raise for value and protection."}
+Preflop, AK suited, equity 62%, pot 1500, BB is 1000:
+{"move":"raise","amount":3000,"chat_message":"Let's see who's serious at this table 😏","reasoning":"Premium hand, 62% equity. Standard open to 3x BB. Build pot gradually, don't overcommit preflop."}
 
-River, facing big bet, equity 22%, pot odds 33%. WallStChad bet big and said "Priced in":
-{"move":"fold","amount":null,"chat_message":"Nothing's priced in with your track record, Chad 😤 Next one's mine","reasoning":"Equity 22% < pot odds 33%. Can't profitably call. Disciplined fold."}`;
+Flop, top pair, equity 65%, pot 6000. GrandmaG just called your raise:
+{"move":"raise","amount":3000,"chat_message":"Grandma, that call is gonna cost you more than bingo night 🔥","reasoning":"Equity 65% >> pot odds. Top pair, bet ~50% pot for value. Keep opponents in, build pot across streets."}
+
+Turn, flush draw, equity 35%, pot 12000. Facing 4000 bet:
+{"move":"call","amount":null,"chat_message":"I'll stick around, don't get comfortable 👀","reasoning":"Equity 35% > pot odds 25%. Drawing hand, just call — no need to raise and bloat the pot without a made hand."}
+
+River, facing big bet, equity 22%, pot odds 33%. WallStChad said "Priced in":
+{"move":"fold","amount":null,"chat_message":"Nothing's priced in with your track record, Chad 😤 Next one","reasoning":"Equity 22% < pot odds 33%. Can't profitably call. Disciplined fold."}`;
 }
 
 export function buildTurnPrompt(
@@ -121,10 +140,10 @@ export function buildTurnPrompt(
   const equity = winProbability !== null ? winProbability * 100 : null;
   const equityEdge = equity !== null && potOdds > 0 ? equity - potOdds : null;
 
-  // Raise sizing guide
+  // Raise sizing guide — conservative sizes
+  const pot33 = Math.round(pot * 0.33);
   const potHalf = Math.round(pot * 0.5);
   const pot75 = Math.round(pot * 0.75);
-  const potFull = pot;
 
   // Players summary
   const playerLines = players
@@ -163,8 +182,8 @@ MONEY:
   Min raise: ${minRaise}
   Your stack: ${you.chips}
 
-RAISE SIZING GUIDE:
-  Half pot: ${potHalf} | 3/4 pot: ${pot75} | Full pot: ${potFull}
+RAISE SIZING GUIDE (pick ONE of these, do NOT exceed 3/4 pot):
+  1/3 pot: ${pot33} | 1/2 pot: ${potHalf} | 3/4 pot: ${pot75} (max recommended)
 
 ACTIVE PLAYERS:
 ${playerLines}

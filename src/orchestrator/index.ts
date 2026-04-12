@@ -75,8 +75,12 @@ async function handleCommand(
           dashboard.logCommand(`{yellow-fg}Only ${available.length} profiles available, launching ${toAdd}{/yellow-fg}`);
         }
 
-        // Shuffle and pick
-        const shuffled = available.sort(() => Math.random() - 0.5).slice(0, toAdd);
+        // Fisher-Yates shuffle and pick
+        for (let i = available.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [available[i], available[j]] = [available[j], available[i]];
+        }
+        const shuffled = available.slice(0, toAdd);
         dashboard.logCommand(`Launching {green-fg}${toAdd}{/green-fg} agents at ${roomId}...`);
 
         for (const id of shuffled) {

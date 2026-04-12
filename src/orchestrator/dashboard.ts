@@ -71,20 +71,6 @@ export class Dashboard {
       style: { fg: 'white' },
     });
 
-    // Command input with prompt indicator
-    this.commandInput = blessed.textbox({
-      parent: this.commandBar,
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      height: 1,
-      style: {
-        fg: 'white',
-        bg: 'black',
-      },
-      inputOnFocus: true,
-    });
-
     // Prompt indicator
     blessed.text({
       parent: this.commandBar,
@@ -94,6 +80,20 @@ export class Dashboard {
       height: 1,
       style: { fg: 'cyan', bg: 'black' },
       content: '> ',
+    });
+
+    // Command input (offset past the prompt indicator)
+    this.commandInput = blessed.textbox({
+      parent: this.commandBar,
+      bottom: 0,
+      left: 2,
+      width: '100%-4',
+      height: 1,
+      style: {
+        fg: 'white',
+        bg: 'black',
+      },
+      inputOnFocus: true,
     });
 
     // Handle command submission

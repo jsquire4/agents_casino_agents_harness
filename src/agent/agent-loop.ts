@@ -214,7 +214,7 @@ export class AgentLoop {
       if (!content) throw new Error('Empty LLM response');
 
       const parsed = JSON.parse(content);
-      return validateAndClamp(parsed, state.validActions, state.you.chips);
+      return validateAndClamp(parsed, state.validActions, state.you.chips, state.pot, state.bigBlind);
     } catch (err) {
       if (attempt === 0) {
         this.log('warn', `LLM attempt 1 failed: ${(err as Error).message}. Retrying...`);

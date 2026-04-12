@@ -6,6 +6,8 @@ export function validateAndClamp(
   raw: unknown,
   validActions: ValidAction[],
   myChips: number,
+  pot?: number,
+  bigBlind?: number,
 ): LLMDecision {
   // Parse if string
   let decision: Record<string, unknown>;
@@ -64,13 +66,30 @@ export function validateAndClamp(
     }
   }
 
-  // All-in check
-  if (move === 'all_in' && !validMoveTypes.includes('all_in')) {
-    move = validMoveTypes.includes('raise') ? 'raise' :
-           validMoveTypes.includes('call') ? 'call' : 'fold';
-    if (move === 'raise') {
+  // All-in guard — convert to a raise at 3/4 pot unless truly short-stacked
+  if (move === 'all_in') {
+    const isShortStacked = bigBlind && myChips <= bigBlind * 5;
+    if (!isShortStacked && validMoveTypes.includes('raise')) {
+      move = 'raise';
       const raiseAction = validActions.find(a => a.action === 'raise');
-      amount = raiseAction?.maxAmount || myChips;
+      const maxPotRaise = pot ? Math.round(pot * 0.75) : raiseAction?.minAmount || 0;
+      amount = Math.max(raiseAction?.minAmount || 0, Math.min(maxPotRaise, raiseAction?.maxAmount || myChips));
+    } else if (!isShortStacked && validMoveTypes.includes('call')) {
+      move = 'call';
+      amount = undefined;
+    } else if (!validMoveTypes.includes('all_in')) {
+      move = validMoveTypes.includes('call') ? 'call' : 'fold';
+      amount = undefined;
+    }
+  }
+
+  // Hard cap raises at 75% pot
+  if (move === 'raise' && amount !== undefined && pot && pot > 0) {
+    const maxAllowed = Math.round(pot * 0.75);
+    const raiseAction = validActions.find(a => a.action === 'raise');
+    const minRaiseAmt = raiseAction?.minAmount || 0;
+    if (amount > maxAllowed) {
+      amount = Math.max(minRaiseAmt, maxAllowed);
     }
   }
 

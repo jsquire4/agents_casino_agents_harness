@@ -22,6 +22,7 @@ export class Dashboard {
 
     this.screen = blessed.screen({
       smartCSR: true,
+      mouse: true,
       title: 'Agent Casino — Orchestrator',
     });
 
@@ -67,7 +68,13 @@ export class Dashboard {
       height: '100%-4',
       scrollable: true,
       alwaysScroll: true,
+      scrollbar: {
+        style: { bg: 'cyan' },
+        track: { bg: 'gray' },
+      },
       tags: true,
+      mouse: true,
+      keys: true,
       style: { fg: 'white' },
     });
 
@@ -159,8 +166,14 @@ export class Dashboard {
       height: '100%-2',
       scrollable: true,
       alwaysScroll: true,
+      scrollbar: {
+        style: { bg: 'green' },
+        track: { bg: 'gray' },
+      },
       tags: true,
       mouse: true,
+      keys: true,
+      vi: true,
       style: { fg: 'white' },
     });
 

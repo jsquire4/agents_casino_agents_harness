@@ -33,6 +33,9 @@ export class AgentLoop {
   private handsPlayed = 0;
   private startingChips: number;
   private lastHandId = '';
+  private lastStatus = '';
+  private lastChips = -1;
+  private lastPhase = '';
   private running = false;
   private acting = false;
 
@@ -107,9 +110,14 @@ export class AgentLoop {
       process.exit(0);
     }
 
-    // Update status
+    // Update status — only emit when something changed
     const status = state.isYourTurn ? 'my_turn' : (state.phase === 'waiting' ? 'waiting' : 'playing');
-    this.emitStatus(status, state.you.chips);
+    if (status !== this.lastStatus || state.you.chips !== this.lastChips || state.phase !== this.lastPhase) {
+      this.lastStatus = status;
+      this.lastChips = state.you.chips;
+      this.lastPhase = state.phase;
+      this.emitStatus(status, state.you.chips);
+    }
 
     // Act if it's our turn
     if (state.isYourTurn && !this.acting) {

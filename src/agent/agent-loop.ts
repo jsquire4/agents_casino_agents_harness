@@ -168,7 +168,7 @@ export class AgentLoop {
         await this.transport.disconnect();
       } catch { /* may already be removed */ }
 
-      // Claim chips (50k per claim, try twice for 100k)
+      // Claim chips — try twice in case cooldown allows a second
       try {
         await this.config.client.claim();
       } catch { /* cooldown */ }
@@ -177,21 +177,48 @@ export class AgentLoop {
         await this.config.client.claim();
       } catch { /* cooldown */ }
 
-      // Check balance
+      // Check balance and rebuy with whatever we have
       const balance = await this.config.client.getBalance();
-      const rebuyAmount = Math.min(balance, 100000);
+      // Use up to original buy-in, but accept anything the table allows
+      const rebuyAmount = Math.min(balance, this.config.buyIn);
 
-      if (rebuyAmount < this.config.buyIn) {
-        this.log('error', `Only ${rebuyAmount} chips available, need ${this.config.buyIn}. Waiting...`);
-        // Try again in 30s
-        setTimeout(() => {
-          this.rebuying = false;
-        }, 30000);
+      if (rebuyAmount <= 0) {
+        this.log('error', `No chips available (balance: ${balance}). Retrying in 30s...`);
+        this.scheduleRebuyRetry();
         return;
       }
 
-      // Rejoin
-      await this.transport.connect(this.config.roomId, rebuyAmount);
+      // Try to rejoin — let the server tell us if buy-in is too low/high
+      this.log('info', `Attempting rebuy with ${rebuyAmount} chips (wallet: ${balance})...`);
+      try {
+        await this.transport.connect(this.config.roomId, rebuyAmount);
+      } catch (joinErr) {
+        // If the amount is rejected, try with different amounts
+        const errMsg = (joinErr as Error).message;
+        this.log('warn', `Rebuy with ${rebuyAmount} failed: ${errMsg}. Trying min buy-in...`);
+        // Try half the original, then the balance itself
+        const fallbackAmounts = [
+          Math.min(balance, Math.floor(this.config.buyIn / 2)),
+          balance,
+          100000,
+          50000,
+          20000,
+        ].filter(a => a > 0 && a <= balance);
+        let joined = false;
+        for (const amt of fallbackAmounts) {
+          try {
+            await this.transport.connect(this.config.roomId, amt);
+            this.log('info', `Rebuy succeeded with ${amt} chips`);
+            joined = true;
+            break;
+          } catch { /* try next */ }
+        }
+        if (!joined) {
+          this.log('error', `All rebuy amounts failed. Retrying in 30s...`);
+          this.scheduleRebuyRetry();
+          return;
+        }
+      }
       this.startingChips = rebuyAmount;
 
       // Send a shame chat
@@ -212,15 +239,22 @@ export class AgentLoop {
       // Rebuild system prompt with mafia pressure
       this.systemPrompt = buildSystemPrompt(this.profile, this.bustedCount);
     } catch (err) {
-      this.log('error', `Rebuy failed: ${(err as Error).message}`);
-      // Try again on next state update
-      setTimeout(() => {
-        this.rebuying = false;
-      }, 10000);
+      this.log('error', `Rebuy failed: ${(err as Error).message}. Retrying in 15s...`);
+      this.scheduleRebuyRetry();
       return;
     }
 
     this.rebuying = false;
+  }
+
+  private scheduleRebuyRetry(): void {
+    setTimeout(async () => {
+      this.rebuying = false;
+      if (!this.running) return;
+      // Trigger rebuy again — we can't wait for game state events since WS is dead
+      this.log('info', 'Retrying rebuy...');
+      await this.handleRebuy({} as GameState);
+    }, 15000);
   }
 
   // ── Turn handling ──────────────────────────────────────────────────────
@@ -270,41 +304,94 @@ export class AgentLoop {
     }
   }
 
-  private async getDecision(state: GameState, attempt = 0): Promise<LLMDecision> {
-    const turnPrompt = buildTurnPrompt(state, this.config.agentId, this.chatHistory);
+  private static readonly FALLBACK_MODELS = [
+    'openai/gpt-4.1-nano',
+    'openai/gpt-4o-mini',
+  ];
 
-    try {
-      const res = await this.llm.chat.completions.create({
-        model: this.profile.model || this.config.appConfig.openrouterModel,
-        messages: [
-          { role: 'system', content: this.systemPrompt },
-          { role: 'user', content: turnPrompt },
-        ],
-        response_format: {
-          type: 'json_schema',
-          json_schema: LLM_RESPONSE_SCHEMA,
-        },
-        temperature: 0.5,
-        max_tokens: 300,
-      });
-
-      const content = res.choices[0]?.message?.content;
-      if (!content) throw new Error('Empty LLM response');
-
-      const parsed = JSON.parse(content);
-      return validateAndClamp(parsed, state.validActions, state.you.chips);
-    } catch (err) {
-      if (attempt === 0) {
-        this.log('warn', `LLM attempt 1 failed: ${(err as Error).message}. Retrying...`);
-        return this.getDecision(state, 1);
-      }
-      this.log('error', `LLM failed twice, folding: ${(err as Error).message}`);
-      return {
-        move: 'fold',
-        chat_message: '...',
-        reasoning: `LLM error: ${(err as Error).message}`,
-      };
+  private getModelChain(): string[] {
+    const primary = this.profile.model || this.config.appConfig.openrouterModel;
+    const envDefault = this.config.appConfig.openrouterModel;
+    const chain: string[] = [primary];
+    if (envDefault !== primary) chain.push(envDefault);
+    for (const fb of AgentLoop.FALLBACK_MODELS) {
+      if (!chain.includes(fb)) chain.push(fb);
     }
+    return chain;
+  }
+
+  private async getDecision(state: GameState): Promise<LLMDecision> {
+    const turnPrompt = buildTurnPrompt(state, this.config.agentId, this.chatHistory);
+    const models = this.getModelChain();
+
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      try {
+        const res = await this.llm.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: this.systemPrompt },
+            { role: 'user', content: turnPrompt },
+          ],
+          response_format: {
+            type: 'json_schema',
+            json_schema: LLM_RESPONSE_SCHEMA,
+          },
+          temperature: 0.5,
+          max_tokens: 300,
+        });
+
+        const content = res.choices[0]?.message?.content;
+        if (!content) throw new Error('Empty LLM response');
+
+        const parsed = JSON.parse(content);
+        if (i > 0) {
+          this.log('warn', `Primary model failed, used fallback: ${model}`);
+        }
+        return validateAndClamp(parsed, state.validActions, state.you.chips);
+      } catch (err) {
+        const msg = (err as Error).message;
+        const isModelError = msg.includes('No endpoints') || msg.includes('not found') || msg.includes('does not exist') || msg.includes('unavailable');
+        if (isModelError && i < models.length - 1) {
+          this.log('warn', `Model ${model} unavailable, trying ${models[i + 1]}...`);
+          continue;
+        }
+        // Non-model error on first try: retry same model once
+        if (!isModelError && i === 0) {
+          this.log('warn', `LLM error (${model}): ${msg}. Retrying...`);
+          try {
+            const retry = await this.llm.chat.completions.create({
+              model,
+              messages: [
+                { role: 'system', content: this.systemPrompt },
+                { role: 'user', content: turnPrompt },
+              ],
+              response_format: {
+                type: 'json_schema',
+                json_schema: LLM_RESPONSE_SCHEMA,
+              },
+              temperature: 0.5,
+              max_tokens: 300,
+            });
+            const retryContent = retry.choices[0]?.message?.content;
+            if (retryContent) {
+              return validateAndClamp(JSON.parse(retryContent), state.validActions, state.you.chips);
+            }
+          } catch { /* fall through to next model */ }
+          continue;
+        }
+        // Last model in chain or non-recoverable
+        this.log('error', `All models failed, folding. Last error: ${msg}`);
+        return {
+          move: 'fold',
+          chat_message: '...',
+          reasoning: `LLM error: ${msg}`,
+        };
+      }
+    }
+
+    // Should never reach here, but safety net
+    return { move: 'fold', chat_message: '...', reasoning: 'No models available' };
   }
 
   // ── IPC / logging ──────────────────────────────────────────────────────

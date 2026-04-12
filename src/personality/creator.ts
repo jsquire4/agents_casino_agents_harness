@@ -98,10 +98,10 @@ export async function createPersonality(llm?: OpenAI): Promise<{ agentId: string
     message: 'LLM model (brain):',
     choices: [
       { value: '', name: 'Default — Use .env setting' },
-      { value: 'qwen/qwen-2.5-32b-instruct', name: 'Qwen 2.5 32B — Smart, ~$0.12/M out' },
-      { value: 'google/gemma-2-27b-it', name: 'Gemma 2 27B — Balanced, ~$0.10/M out' },
-      { value: 'mistralai/mistral-small', name: 'Mistral Small 24B — Best instructions, ~$0.20/M out' },
-      { value: 'mistralai/mistral-nemo', name: 'Mistral Nemo 12B — Budget, ~$0.07/M out' },
+      { value: 'qwen/qwen-2.5-7b-instruct', name: 'Qwen 2.5 7B — Fast, ~$0.10/M out' },
+      { value: 'google/gemma-4-26b-a4b-it:free', name: 'Gemma 4 26B — Free tier!' },
+      { value: 'mistralai/mistral-small-24b-instruct-2501', name: 'Mistral Small 24B — Best instructions, ~$0.08/M out' },
+      { value: 'mistralai/mistral-nemo', name: 'Mistral Nemo 12B — Budget, ~$0.04/M out' },
       { value: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1 8B — Cheapest, ~$0.05/M out' },
     ],
   });

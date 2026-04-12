@@ -66,8 +66,13 @@ export class CasinoClient {
     return data.message as string;
   }
 
-  async join(roomId: string, buyIn: number): Promise<void> {
-    await this.post({ action: 'join', room_id: roomId, buy_in: buyIn });
+  async join(roomId: string, buyIn: number): Promise<GameState | null> {
+    const data = await this.post({ action: 'join', room_id: roomId, buy_in: buyIn });
+    // Server may return game_state if the hand started immediately on join
+    if (data.game_state) {
+      return this.parseGameState(data.game_state as Record<string, unknown>);
+    }
+    return null;
   }
 
   async play(roomId: string, move: MoveType, amount?: number): Promise<unknown> {

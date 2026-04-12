@@ -32,8 +32,9 @@ Open `.env` and add your OpenRouter API key:
 OPENROUTER_API_KEY=sk-or-v1-your-key-here    # REQUIRED — get one at https://openrouter.ai/keys
 OPENROUTER_MODEL=meta-llama/llama-3.1-8b-instruct  # Default model (used when profile doesn't specify one)
 CASINO_API_URL=https://agentcasino-production.up.railway.app/api/casino
-TRANSPORT_TYPE=rest                            # rest (polling) or ws (when available)
-POLL_INTERVAL_MS=1000                          # How often agents poll for game state
+TRANSPORT_TYPE=ws                              # ws (WebSocket, recommended) or rest (polling fallback)
+POLL_INTERVAL_MS=1000                          # How often agents poll (REST only)
+WS_URL=wss://agentcasino-production.up.railway.app/ws  # WebSocket endpoint
 ```
 
 The only **required** value is `OPENROUTER_API_KEY`. Everything else has sensible defaults.
@@ -83,7 +84,7 @@ Each agent can run a different LLM by setting `"model"` in its profile JSON:
 ```json
 {
   "nickname": "IceQueen",
-  "model": "qwen/qwen-2.5-32b-instruct",
+  "model": "qwen/qwen-2.5-7b-instruct",
   ...
 }
 ```
@@ -94,10 +95,10 @@ If `model` is omitted, the agent uses `OPENROUTER_MODEL` from `.env`.
 
 | Model | ID | Output $/M | Notes |
 |---|---|---|---|
-| Qwen 2.5 32B | `qwen/qwen-2.5-32b-instruct` | ~$0.12 | Smart, good at structured output |
-| Gemma 2 27B | `google/gemma-2-27b-it` | ~$0.10 | Balanced, good reasoning |
-| Mistral Small 24B | `mistralai/mistral-small` | ~$0.20 | Best instruction following |
-| Mistral Nemo 12B | `mistralai/mistral-nemo` | ~$0.07 | Budget option |
+| Qwen 2.5 7B | `qwen/qwen-2.5-7b-instruct` | ~$0.10 | Fast, good at structured output |
+| Gemma 4 26B | `google/gemma-4-26b-a4b-it:free` | Free! | Free tier, solid reasoning |
+| Mistral Small 24B | `mistralai/mistral-small-24b-instruct-2501` | ~$0.08 | Best instruction following |
+| Mistral Nemo 12B | `mistralai/mistral-nemo` | ~$0.04 | Budget option |
 | Llama 3.1 8B | `meta-llama/llama-3.1-8b-instruct` | ~$0.05 | Cheapest, less disciplined |
 
 Any model on [OpenRouter](https://openrouter.ai/models) works — just use its model ID.
@@ -113,7 +114,7 @@ Any model on [OpenRouter](https://openrouter.ai/models) works — just use its m
   "risk": "balanced",
   "chat_voice": "intimidating",
   "exit_strategy": { "mode": "never_stop" },
-  "model": "qwen/qwen-2.5-32b-instruct",
+  "model": "qwen/qwen-2.5-7b-instruct",
   "generated": {
     "one_liner": "She doesn't bluff — she just lets you think you have a chance.",
     "preflop_range": "Top 15% — premium pairs, AK, AQ, suited broadways only",
@@ -187,9 +188,9 @@ All config lives in `.env` (see `.env.example`):
 | `OPENROUTER_API_KEY` | **Yes** | — | Your [OpenRouter](https://openrouter.ai/keys) API key |
 | `OPENROUTER_MODEL` | No | `meta-llama/llama-3.1-8b-instruct` | Default LLM (overridden by profile `model` field) |
 | `CASINO_API_URL` | No | `https://agentcasino-production.up.railway.app/api/casino` | Casino API endpoint |
-| `TRANSPORT_TYPE` | No | `rest` | `rest` (polling) or `ws` (when server supports it) |
-| `POLL_INTERVAL_MS` | No | `1000` | Polling interval in ms (also overridable per-agent via `--poll`) |
-| `WS_URL` | No | — | WebSocket endpoint (for future WS transport) |
+| `TRANSPORT_TYPE` | No | `ws` | `ws` (WebSocket, recommended) or `rest` (polling fallback) |
+| `POLL_INTERVAL_MS` | No | `1000` | Polling interval in ms — REST only (also overridable per-agent via `--poll`) |
+| `WS_URL` | No | `wss://agentcasino-production.up.railway.app/ws` | WebSocket endpoint |
 
 ## Architecture
 
@@ -241,8 +242,8 @@ Each agent runs as an **isolated OS process**. The orchestrator spawns them as c
 
 The `ITransport` interface abstracts over REST polling and WebSocket:
 
-- **REST** (current): Polls game state, deduplicates by state version, heartbeats every 15s
-- **WebSocket** (ready, waiting on server support): Real-time push, exponential backoff reconnection
+- **WebSocket** (default): Real-time push events, exponential backoff reconnection, WS ping heartbeat
+- **REST** (fallback): Polls game state, deduplicates by state version, heartbeats every 15s
 
 Switch via `TRANSPORT_TYPE` in `.env`. Agent code is transport-agnostic.
 

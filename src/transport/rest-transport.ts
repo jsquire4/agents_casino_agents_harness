@@ -28,8 +28,9 @@ export class RestTransport implements ITransport {
 
   async connect(roomId: string, buyIn: number): Promise<void> {
     this.roomId = roomId;
+    let initialState = null;
     try {
-      await this.client.join(roomId, buyIn);
+      initialState = await this.client.join(roomId, buyIn);
     } catch (err: unknown) {
       // "Already at this table" is fine — we're reconnecting
       const msg = err instanceof Error ? err.message : String(err);
@@ -37,6 +38,10 @@ export class RestTransport implements ITransport {
     }
     this.startPolling();
     this.startHeartbeat();
+    // If the server returned a game state on join (hand started immediately), fire it
+    if (initialState && this.gameStateCb) {
+      this.gameStateCb(initialState);
+    }
   }
 
   async disconnect(): Promise<void> {

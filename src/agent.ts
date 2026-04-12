@@ -48,25 +48,26 @@ async function main() {
   const transport = createTransport(config, client, creds.secretKey);
   const llm = createOpenRouterClient(config);
 
-  // Claim chips if needed
+  // Ensure we have enough chips before joining
   try {
     const balance = await client.getBalance();
     if (balance < buyIn) {
-      const msg = await client.claim();
-      console.log(`Chips: ${msg}`);
+      await client.claim();
     }
   } catch {
-    try {
-      const msg = await client.claim();
-      console.log(`Chips: ${msg}`);
-    } catch { /* cooldown, proceed anyway */ }
+    try { await client.claim(); } catch { /* cooldown — proceed with what we have */ }
   }
 
+  // If still short, buy in with what we have
+  const finalBalance = await client.getBalance().catch(() => 0);
+  const effectiveBuyIn = finalBalance >= buyIn ? buyIn : Math.max(finalBalance, 0);
+
   // Create and start agent loop
+  const actualBuyIn = effectiveBuyIn > 0 ? effectiveBuyIn : buyIn;
   const loop = new AgentLoop(transport, llm, profile, {
     agentId: creds.agentId,
     roomId,
-    buyIn,
+    buyIn: actualBuyIn,
     appConfig: config,
     client,
   });

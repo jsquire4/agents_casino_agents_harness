@@ -100,7 +100,7 @@ export const LLM_RESPONSE_SCHEMA = {
       chat_message: { type: 'string' as const },
       reasoning: { type: 'string' as const },
     },
-    required: ['move', 'chat_message', 'reasoning'],
+    required: ['move', 'amount', 'chat_message', 'reasoning'],
     additionalProperties: false,
   },
 };

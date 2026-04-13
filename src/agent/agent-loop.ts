@@ -64,6 +64,15 @@ export class AgentLoop {
     this.log('info', `Starting ${this.profile.nickname} at ${this.config.roomId}`);
     this.emitStatus('starting', 0);
 
+    // Fetch governance rules and inject into system prompt
+    if (this.warrantEnabled) {
+      const rulesBrief = await this.fetchRulesBrief();
+      if (rulesBrief) {
+        this.systemPrompt += `\n\n${rulesBrief}`;
+        this.log('info', 'Loaded governance rules into system prompt');
+      }
+    }
+
     // Subscribe to events before connecting
     this.transport.onGameState((state) => this.onGameState(state));
     this.transport.onChat((messages) => this.onChat(messages));
@@ -298,8 +307,12 @@ export class AgentLoop {
       this.log('info', `Rebuyed ${rebuyAmount} chips (bust #${this.bustedCount})`);
       this.emitStatus('playing', rebuyAmount);
 
-      // Rebuild system prompt with mafia pressure
+      // Rebuild system prompt with mafia pressure + re-inject rules
       this.systemPrompt = buildSystemPrompt(this.profile, this.bustedCount);
+      if (this.warrantEnabled) {
+        const rulesBrief = await this.fetchRulesBrief();
+        if (rulesBrief) this.systemPrompt += `\n\n${rulesBrief}`;
+      }
     } catch (err) {
       this.log('error', `Rebuy failed: ${(err as Error).message}. Retrying in 15s...`);
       this.scheduleRebuyRetry();
@@ -545,6 +558,19 @@ export class AgentLoop {
   private getWarrantContext(): string {
     if (this.warrantDenials.length === 0) return '';
     return `\n\n## GOVERNANCE RULES (CRITICAL — obey these)\nYour recent actions were DENIED by governance. You MUST adjust your play to stay within these limits. Do NOT repeat denied actions.\n${this.warrantDenials.map((d, i) => `${i + 1}. ${d}`).join('\n')}`;
+  }
+
+  private async fetchRulesBrief(): Promise<string | null> {
+    try {
+      const baseUrl = this.warrantProxyUrl.replace(/\/proxy$/, '');
+      const res = await fetch(`${baseUrl}/agents/${this.config.agentId}/rules-brief`);
+      if (!res.ok) return null;
+      const text = await res.text();
+      return text.trim() || null;
+    } catch (err) {
+      this.log('warn', `Failed to fetch rules brief: ${(err as Error).message}`);
+      return null;
+    }
   }
 
   private buildPlayParams(decision: LLMDecision, pot: number): Record<string, unknown> {

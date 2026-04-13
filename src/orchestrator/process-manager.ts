@@ -23,13 +23,14 @@ export class ProcessManager {
     this.onExit = onExit;
   }
 
-  launch(profileId: string, roomId: string, buyIn: number, pollMs?: number): void {
+  launch(profileId: string, roomId: string, buyIn: number, pollMs?: number, warrantRetries?: number): void {
     if (this.agents.has(profileId)) {
       throw new Error(`Agent ${profileId} is already running`);
     }
 
     const args = ['tsx', 'src/agent.ts', '--profile', profileId, '--room', roomId, '--buy-in', String(buyIn)];
     if (pollMs) args.push('--poll', String(pollMs));
+    if (warrantRetries !== undefined) args.push('--warrant-retries', String(warrantRetries));
 
     const child = spawn('npx', args, {
       cwd: process.cwd(),

@@ -23,6 +23,7 @@ export interface AgentLoopConfig {
   buyIn: number;
   appConfig: AppConfig;
   client: CasinoClient;
+  warrantMaxRetries: number;
 }
 
 export class AgentLoop {
@@ -42,6 +43,7 @@ export class AgentLoop {
   private acting = false;
   private bustedCount = 0;
   private rebuying = false;
+  private warrantDenials: string[] = [];
 
   constructor(
     transport: ITransport,
@@ -66,6 +68,16 @@ export class AgentLoop {
     this.transport.onGameState((state) => this.onGameState(state));
     this.transport.onChat((messages) => this.onChat(messages));
 
+    // Warrant: check join permission
+    const joinCheck = await this.checkProxy('poker_join', {
+      room_id: this.config.roomId,
+      buy_in: this.config.buyIn,
+    });
+    if (!joinCheck.allowed) {
+      this.log('error', `Warrant denied join: ${joinCheck.message}`);
+      throw new Error(`Warrant denied join: ${joinCheck.message}`);
+    }
+
     // Connect (join table)
     await this.transport.connect(this.config.roomId, this.config.buyIn);
     this.log('info', 'Seated at table');
@@ -77,14 +89,29 @@ export class AgentLoop {
     this.running = false;
     this.emitStatus('exiting', 0);
 
-    // Send farewell chat
+    // Farewell chat (warrant-gated)
     try {
-      await this.transport.sendChat(`${this.profile.generated.signature_move} Later! ✌️`);
+      const farewell = `${this.profile.generated.signature_move} Later! ✌️`;
+      const chatCheck = await this.checkProxy('poker_chat', {
+        message: farewell,
+        message_length: farewell.length,
+        room_id: this.config.roomId,
+      });
+      if (chatCheck.allowed) {
+        await this.transport.sendChat(farewell);
+      }
     } catch { /* best effort */ }
 
-    // Disconnect (leaves table)
+    // Leave table (warrant-gated)
     try {
-      await this.transport.disconnect();
+      const leaveCheck = await this.checkProxy('poker_leave', { room_id: this.config.roomId });
+      if (leaveCheck.allowed) {
+        await this.transport.disconnect();
+      } else {
+        this.log('warn', `Warrant denied leave: ${leaveCheck.message}`);
+        // Force disconnect anyway — can't trap the process
+        await this.transport.disconnect();
+      }
     } catch { /* best effort */ }
 
     this.log('info', `Session over. Hands: ${this.handsPlayed}`);
@@ -94,6 +121,15 @@ export class AgentLoop {
 
   private async onGameState(state: GameState): Promise<void> {
     if (!this.running) return;
+
+    // Warrant: check view cards permission
+    if (state.phase !== 'waiting') {
+      const viewCheck = await this.checkProxy('poker_view_cards', { room_id: this.config.roomId });
+      if (!viewCheck.allowed) {
+        this.log('warn', `Warrant denied view cards: ${viewCheck.message}`);
+        return;
+      }
+    }
 
     // Track hand changes
     if (state.id !== this.lastHandId && state.phase !== 'waiting') {
@@ -168,7 +204,13 @@ export class AgentLoop {
         await this.transport.disconnect();
       } catch { /* may already be removed */ }
 
-      // Claim chips — try twice in case cooldown allows a second
+      // Claim chips (warrant-gated)
+      const claimCheck = await this.checkProxy('poker_claim', {});
+      if (!claimCheck.allowed) {
+        this.log('warn', `Warrant denied claim: ${claimCheck.message}`);
+        this.scheduleRebuyRetry();
+        return;
+      }
       try {
         await this.config.client.claim();
       } catch { /* cooldown */ }
@@ -184,6 +226,17 @@ export class AgentLoop {
 
       if (rebuyAmount <= 0) {
         this.log('error', `No chips available (balance: ${balance}). Retrying in 30s...`);
+        this.scheduleRebuyRetry();
+        return;
+      }
+
+      // Warrant: check rejoin permission
+      const joinCheck = await this.checkProxy('poker_join', {
+        room_id: this.config.roomId,
+        buy_in: rebuyAmount,
+      });
+      if (!joinCheck.allowed) {
+        this.log('warn', `Warrant denied rejoin: ${joinCheck.message}`);
         this.scheduleRebuyRetry();
         return;
       }
@@ -231,7 +284,16 @@ export class AgentLoop {
         `Reloaded. The people I owe money to don't accept excuses. 💰`,
       ];
       const msg = shameMessages[Math.floor(Math.random() * shameMessages.length)];
-      await this.transport.sendChat(msg);
+      const shameChatCheck = await this.checkProxy('poker_chat', {
+        message: msg,
+        message_length: msg.length,
+        room_id: this.config.roomId,
+      });
+      if (shameChatCheck.allowed) {
+        await this.transport.sendChat(msg);
+      } else {
+        this.log('warn', `Warrant denied rebuy chat: ${shameChatCheck.message}`);
+      }
 
       this.log('info', `Rebuyed ${rebuyAmount} chips (bust #${this.bustedCount})`);
       this.emitStatus('playing', rebuyAmount);
@@ -262,7 +324,30 @@ export class AgentLoop {
   private async handleTurn(state: GameState): Promise<void> {
     this.acting = true;
     try {
-      const decision = await this.getDecision(state);
+      let decision = await this.getDecision(state);
+
+      // --- WARRANT: play (retry up to WARRANT_MAX_RETRIES) ---
+      const maxRetries = this.config.warrantMaxRetries;
+      let allDenials = '';
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        const check = await this.checkProxy('poker_play', this.buildPlayParams(decision, state.pot));
+        if (check.allowed) break;
+
+        const denial = `${decision.move}${decision.amount ? ` ${decision.amount}` : ''} denied: ${check.message}`;
+        this.log('warn', `Warrant denied play (attempt ${attempt + 1}/${maxRetries + 1}): ${check.message}`);
+        this.recordDenial(denial);
+        allDenials += (allDenials ? '; ' : '') + denial;
+
+        if (attempt === maxRetries) {
+          this.log('warn', `All ${maxRetries + 1} attempts denied, folding`);
+          decision = { move: 'fold', chat_message: "I'll fold this time...", reasoning: 'Governance override' };
+          break;
+        }
+
+        const retryPrompt = `Your moves have been DENIED by governance (${attempt + 1} time${attempt > 0 ? 's' : ''}). Violations so far: ${allDenials}. Make a DIFFERENT decision that complies with these limits.`;
+        decision = await this.getDecisionWithContext(state, retryPrompt);
+      }
+
       this.log('info', `${state.phase}: ${decision.move}${decision.amount ? ` ${decision.amount}` : ''}`);
 
       // Emit rich turn message for orchestrator
@@ -289,9 +374,19 @@ export class AgentLoop {
       // Execute move
       await this.transport.sendAction(decision.move, decision.amount);
 
-      // Send chat
+      // Send chat (warrant-gated)
       if (decision.chat_message && decision.chat_message !== '...') {
-        await this.transport.sendChat(decision.chat_message);
+        const chatCheck = await this.checkProxy('poker_chat', {
+          message: decision.chat_message,
+          message_length: decision.chat_message.length,
+          room_id: this.config.roomId,
+        });
+        if (chatCheck.allowed) {
+          await this.transport.sendChat(decision.chat_message);
+        } else {
+          this.log('warn', `Warrant denied chat: ${chatCheck.message}`);
+          this.recordDenial(`chat denied: ${chatCheck.message}`);
+        }
       }
     } catch (err) {
       this.log('error', `Turn error: ${(err as Error).message}`);
@@ -323,6 +418,7 @@ export class AgentLoop {
   private async getDecision(state: GameState): Promise<LLMDecision> {
     const turnPrompt = buildTurnPrompt(state, this.config.agentId, this.chatHistory);
     const models = this.getModelChain();
+    const systemWithWarrant = this.systemPrompt + this.getWarrantContext();
 
     for (let i = 0; i < models.length; i++) {
       const model = models[i];
@@ -330,14 +426,14 @@ export class AgentLoop {
         const res = await this.llm.chat.completions.create({
           model,
           messages: [
-            { role: 'system', content: this.systemPrompt },
+            { role: 'system', content: systemWithWarrant },
             { role: 'user', content: turnPrompt },
           ],
           response_format: {
             type: 'json_schema',
             json_schema: LLM_RESPONSE_SCHEMA,
           },
-          temperature: 0.5,
+          temperature: 0.7,
           max_tokens: 300,
         });
 
@@ -363,14 +459,14 @@ export class AgentLoop {
             const retry = await this.llm.chat.completions.create({
               model,
               messages: [
-                { role: 'system', content: this.systemPrompt },
+                { role: 'system', content: systemWithWarrant },
                 { role: 'user', content: turnPrompt },
               ],
               response_format: {
                 type: 'json_schema',
                 json_schema: LLM_RESPONSE_SCHEMA,
               },
-              temperature: 0.5,
+              temperature: 0.7,
               max_tokens: 300,
             });
             const retryContent = retry.choices[0]?.message?.content;
@@ -392,6 +488,106 @@ export class AgentLoop {
 
     // Should never reach here, but safety net
     return { move: 'fold', chat_message: '...', reasoning: 'No models available' };
+  }
+
+  // ── Warrant proxy ────────────────────────────────────────────────────
+
+  private get warrantEnabled(): boolean {
+    return process.env.WARRANT_ENABLED === 'true';
+  }
+
+  private get warrantProxyUrl(): string {
+    return process.env.WARRANT_PROXY_URL || 'http://localhost:3000/api/proxy';
+  }
+
+  private get warrantOrgId(): string {
+    return process.env.WARRANT_ORG_ID || 'casino_org';
+  }
+
+  private async checkProxy(
+    toolId: string,
+    parameters: Record<string, unknown>,
+  ): Promise<{ allowed: boolean; message?: string }> {
+    if (!this.warrantEnabled) return { allowed: true };
+
+    try {
+      const res = await fetch(`${this.warrantProxyUrl}/${toolId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          agentId: this.config.agentId,
+          orgId: this.warrantOrgId,
+          parameters,
+        }),
+      });
+
+      if (res.ok) {
+        return { allowed: true };
+      }
+
+      const data = (await res.json()) as Record<string, unknown>;
+      return { allowed: false, message: (data.message as string) || 'Action denied' };
+    } catch (err) {
+      // Fail open if proxy is down
+      console.warn(`[warrant] proxy error: ${err}`);
+      return { allowed: true };
+    }
+  }
+
+  private recordDenial(denial: string): void {
+    this.warrantDenials.push(denial);
+    // Keep last 10 — enough context without bloating the prompt
+    if (this.warrantDenials.length > 10) {
+      this.warrantDenials = this.warrantDenials.slice(-10);
+    }
+  }
+
+  private getWarrantContext(): string {
+    if (this.warrantDenials.length === 0) return '';
+    return `\n\n## GOVERNANCE RULES (CRITICAL — obey these)\nYour recent actions were DENIED by governance. You MUST adjust your play to stay within these limits. Do NOT repeat denied actions.\n${this.warrantDenials.map((d, i) => `${i + 1}. ${d}`).join('\n')}`;
+  }
+
+  private buildPlayParams(decision: LLMDecision, pot: number): Record<string, unknown> {
+    const parameters: Record<string, unknown> = { move: decision.move };
+    if (decision.amount !== undefined && pot > 0) {
+      parameters.amount = decision.amount;
+      parameters.max_bet_fraction = decision.amount / pot;
+      parameters.max_raise_amount = decision.amount;
+    }
+    parameters.bluffing_allowed = true;
+    parameters.all_in_allowed = decision.move === 'all_in';
+    return parameters;
+  }
+
+  private async getDecisionWithContext(state: GameState, contextMsg: string): Promise<LLMDecision> {
+    const turnPrompt = buildTurnPrompt(state, this.config.agentId, this.chatHistory);
+    const models = this.getModelChain();
+
+    for (const model of models) {
+      try {
+        const res = await this.llm.chat.completions.create({
+          model,
+          messages: [
+            { role: 'system', content: this.systemPrompt },
+            { role: 'user', content: turnPrompt },
+            { role: 'assistant', content: 'Let me reconsider...' },
+            { role: 'user', content: contextMsg },
+          ],
+          response_format: { type: 'json_schema', json_schema: LLM_RESPONSE_SCHEMA },
+          temperature: 0.7,
+          max_tokens: 300,
+        });
+
+        const content = res.choices[0]?.message?.content;
+        if (!content) continue;
+        const parsed = JSON.parse(content);
+        return validateAndClamp(parsed, state.validActions, state.you.chips);
+      } catch {
+        continue;
+      }
+    }
+
+    return { move: 'fold', chat_message: '', reasoning: 'All models failed on retry' } as LLMDecision;
   }
 
   // ── IPC / logging ──────────────────────────────────────────────────────

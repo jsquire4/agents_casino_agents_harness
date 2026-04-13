@@ -39,7 +39,7 @@ async function handleCommand(
 
   switch (cmd) {
     case 'add': {
-      // Parse --poll flag from anywhere in the args
+      // Parse flags from anywhere in the args
       const pollIdx = parts.indexOf('--poll');
       let pollMs: number | undefined;
       if (pollIdx !== -1 && parts[pollIdx + 1]) {
@@ -47,15 +47,22 @@ async function handleCommand(
         parts.splice(pollIdx, 2);
       }
 
+      const retriesIdx = parts.indexOf('--warrant-retries');
+      let warrantRetries: number | undefined;
+      if (retriesIdx !== -1 && parts[retriesIdx + 1]) {
+        warrantRetries = parseInt(parts[retriesIdx + 1], 10);
+        parts.splice(retriesIdx, 2);
+      }
+
       const arg = parts[1];
       const roomId = parts[2] || 'casino_low_1';
       const buyIn = parseInt(parts[3] || '20000', 10);
 
       if (!arg) {
-        dashboard.logCommand('{red-fg}Usage: add <profile_id|number> [room_id] [buy_in] [--poll ms]{/red-fg}');
-        dashboard.logCommand('{gray-fg}  add ice_queen                    — launch one agent{/gray-fg}');
-        dashboard.logCommand('{gray-fg}  add 5 casino_low_1 20000         — launch 5 random agents{/gray-fg}');
-        dashboard.logCommand('{gray-fg}  add 3 casino_low_1 20000 --poll 500  — launch 3 with 500ms polling{/gray-fg}');
+        dashboard.logCommand('{red-fg}Usage: add <profile_id|number> [room_id] [buy_in] [--poll ms] [--warrant-retries N]{/red-fg}');
+        dashboard.logCommand('{gray-fg}  add ice_queen                              — launch one agent{/gray-fg}');
+        dashboard.logCommand('{gray-fg}  add 5 casino_low_1 20000                   — launch 5 random agents{/gray-fg}');
+        dashboard.logCommand('{gray-fg}  add 3 casino_low_1 20000 --warrant-retries 10  — 10 retries on deny{/gray-fg}');
         return;
       }
 
@@ -87,7 +94,7 @@ async function handleCommand(
           try {
             const profile = await loadProfile(id);
             dashboard.addPane(id, profile.nickname);
-            pm.launch(id, roomId, buyIn, pollMs);
+            pm.launch(id, roomId, buyIn, pollMs, warrantRetries);
             dashboard.logCommand(`  + {green-fg}${profile.nickname}{/green-fg} (${id})`);
             // Stagger to avoid API rate limits
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -109,7 +116,7 @@ async function handleCommand(
         const profile = await loadProfile(profileId);
         dashboard.addPane(profileId, profile.nickname);
         dashboard.logCommand(`Launching {green-fg}${profile.nickname}{/green-fg} at ${roomId} (buy-in: ${buyIn})...`);
-        pm.launch(profileId, roomId, buyIn, pollMs);
+        pm.launch(profileId, roomId, buyIn, pollMs, warrantRetries);
       } catch (err) {
         dashboard.logCommand(`{red-fg}Failed to load profile "${profileId}": ${(err as Error).message}{/red-fg}`);
         dashboard.logCommand(`Available profiles: ${(await listProfiles()).join(', ') || '(none)'}`);
@@ -191,6 +198,12 @@ async function handleCommand(
 
     case 'addall':
     case 'add-all': {
+      const aaRetriesIdx = parts.indexOf('--warrant-retries');
+      let aaWarrantRetries: number | undefined;
+      if (aaRetriesIdx !== -1 && parts[aaRetriesIdx + 1]) {
+        aaWarrantRetries = parseInt(parts[aaRetriesIdx + 1], 10);
+        parts.splice(aaRetriesIdx, 2);
+      }
       const roomId = parts[1] || 'casino_low_1';
       const buyIn = parseInt(parts[2] || '20000', 10);
       const profiles = await listProfiles();
@@ -206,7 +219,7 @@ async function handleCommand(
         try {
           const profile = await loadProfile(id);
           dashboard.addPane(id, profile.nickname);
-          pm.launch(id, roomId, buyIn);
+          pm.launch(id, roomId, buyIn, undefined, aaWarrantRetries);
           // Stagger launches by 500ms to avoid API rate limits
           await new Promise(resolve => setTimeout(resolve, 500));
         } catch (err) {

@@ -13,12 +13,13 @@ async function main() {
       room: { type: 'string', short: 'r', default: 'casino_low_1' },
       'buy-in': { type: 'string', short: 'b', default: '20000' },
       poll: { type: 'string', default: '' },
+      'warrant-retries': { type: 'string', default: '3' },
     },
   });
 
   const profileId = values.profile;
   if (!profileId) {
-    console.error('Usage: npx tsx src/agent.ts --profile <agent_id> [--room <room_id>] [--buy-in <amount>]');
+    console.error('Usage: npx tsx src/agent.ts --profile <agent_id> [--room <room_id>] [--buy-in <amount>] [--warrant-retries <n>]');
     console.error('\nCreate a profile first: npx tsx src/personality/creator.ts');
     process.exit(1);
   }
@@ -70,6 +71,7 @@ async function main() {
     buyIn: actualBuyIn,
     appConfig: config,
     client,
+    warrantMaxRetries: parseInt(values['warrant-retries']!, 10),
   });
 
   // Graceful shutdown
